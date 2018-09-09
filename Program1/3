@@ -1,0 +1,233 @@
+import random
+import copy
+
+
+class Card:
+    def __init__(self, suit, rank):
+        self.suit = suit
+        self.rank = rank
+
+    def __repr__(self):
+        rank = str(self.rank)
+        if self.rank > 10:
+            rank = ['J', 'Q', 'K', 'A'][self.rank - 11]
+        return '{}:{}'.format(self.suit, rank)
+
+
+class Hand:
+    def __init__(self, cards):
+        self.cards = cards
+
+    def __repr__(self):
+        return str(self.cards)
+
+    def all_combos(self, community):
+        for i in range(len(community)):
+            for j in range(len(community)):
+                if j == i:
+                    continue
+                yield [community[i], community[j]]
+
+    def count_ranks(self, combo):
+        counts = {}
+        for card in combo:
+            if card.rank not in counts:
+                counts[card.rank] = 0
+            counts[card.rank] += 1
+        return counts
+
+    def count_suits(self, combo):
+        counts = {}
+        for card in combo:
+            if card.suit not in counts:
+                counts[card.suit] = 0
+            counts[card.suit] += 1
+        return counts
+
+    def one_pair(self, combo):
+        counts = self.count_ranks(combo)
+        highest = 0
+        for rank, count in counts.items():
+            if count == 2 and rank > highest:
+                highest = rank
+        # we didn't find a pair
+        if highest == 0:
+            return False, []
+        # order the rest of the cards for scoring
+        scoring = sorted(counts.keys(), reverse=True)
+        scoring.remove(highest)
+        scoring = [highest, *scoring]
+        return True, scoring
+
+    def two_pair(self, combo):
+        counts = self.count_ranks(combo)
+        pairs = []
+        other = []
+        for rank, count in counts.items():
+            if count == 2:
+                pairs.append(rank)
+            else:
+                other.append(rank)
+        # did we find a pair
+        if len(pairs) != 2:
+            return False, []
+        # order for scoring
+        scoring = [*sorted(pairs, reverse=True), *sorted(other, reverse=True)]
+        return True, scoring
+
+    def three_of_a_kind(self, combo):
+        counts = self.count_ranks(combo)
+        threes = []
+        other = []
+        for rank, count in counts.items():
+            if count == 3:
+                threes.append(rank)
+            if count == 2:
+                # can't be 3 of a kind
+                return False, []
+            if count == 1:
+                other.append(rank)
+        # did we find a pair
+        if len(threes) == 0:
+            return False, []
+        # order for scoring
+        scoring = [threes[0], *sorted(other, reverse=True)]
+        return True, scoring
+
+    def straight(self, combo):
+        counts = self.count_ranks(combo)
+        ranks = sorted(counts.keys(), reverse=True)
+        last_rank = 0
+        for rank in ranks:
+            # make sure we only have one card
+            if counts[rank] != 1:
+                return False, []
+            # make sure it's in order
+            if last_rank != 0 and last_rank != rank + 1:
+                return False, []
+            last_rank = rank
+        return True, ranks
+
+    def flush(self, combo):
+        counts = self.count_suits(combo)
+        for suit, count in counts.items():
+            if count != 5:
+                return False, []
+        return True, sorted([card.rank for card in combo], reverse=True)
+
+    def full_house(self, combo):
+        counts = self.count_ranks(combo)
+        three = 0
+        two = 0
+        for rank, count in counts.items():
+            if count == 3:
+                three = rank
+            if count == 2:
+                two = rank
+        if three == 0 or two == 0:
+            return False, []
+        return True, [three]
+
+    def four_of_a_kind(self, combo):
+        counts = self.count_ranks(combo)
+        for rank, count in counts.items():
+            if count == 4:
+                return True, [rank]
+        return False, []
+
+    def straight_flush(self, combo):
+        for suit, count in self.count_suits(combo).items():
+            if count != 5:
+                return False, []
+        return self.straight(combo)
+
+    def score(self, combo):
+        score_funcs = [
+            self.one_pair,
+            self.two_pair,
+            self.three_of_a_kind,
+            self.straight,
+            self.flush,
+            self.full_house,
+            self.four_of_a_kind,
+            self.straight_flush]
+        i = len(score_funcs)
+        for func in reversed(score_funcs):
+            passed, scoring = func(combo)
+            if passed:
+                return i, scoring
+            i -= 1
+        return 0, sorted([card.rank for card in combo], reverse=True)
+
+    def compare(self, score1, score2):
+        for i in range(min(len(score1), len(score2))):
+            if score1[i] == score2[i]:
+                continue
+            return score1[i] > score2[i]
+
+    def best(self, community):
+        highest = -1
+        highest_scoring = []
+        for combo in self.all_combos(community):
+            value, scoring = self.score([*combo, *self.cards])
+            if value > highest:
+                highest = value
+                highest_scoring = scoring
+            if value == highest and self.compare(scoring, highest_scoring):
+                highest = value
+                highest_scoring = scoring
+        return highest, highest_scoring
+
+
+class Deck:
+    def __init__(self):
+        self.cards = []
+        # generate the cards
+        for suit in ['H', 'D', 'C', 'S']:
+            for rank in range(1, 15):
+                self.cards.append(Card(suit, rank))
+
+    def deal(self, hands, size):
+        # make n hands with size cards
+        for i in range(hands):
+            yield Hand(self.draw(size))
+
+    def draw(self, size):
+        # draw size cards
+        cards = random.sample(self.cards, size)
+        (self.cards.remove(card) for card in cards)
+        return cards
+        
+
+def get_scores(community, players):
+    # limit processing to one hand at a time
+    for player in players:
+        yield player.best(community)
+
+def run_simulation(deck, community, my_hand, players):
+    scores = get_scores(community, deck.deal(players - 1, 3))
+    my_value, my_scoring = my_hand.best(community)
+
+    for value, scoring in scores:
+        if my_value < value or (my_value == value and my_hand.compare(scoring, my_scoring)):
+            return False
+    return True
+
+def run_hand(players):
+    deck = Deck()
+    community = deck.draw(5)
+    my_hand = Hand(deck.draw(2))
+    my_score = my_hand.best(community)
+    print(my_hand)
+    print(community)
+
+    wins = 0
+    for i in range(200):
+        if run_simulation(copy.deepcopy(deck), community, my_hand, players):
+            wins += 1
+
+wins = 0
+for i in range(500):
+    if run_hand(5):
+        wins += 1
+print(wins / 500)
